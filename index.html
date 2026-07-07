@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>수원학군 1구역 고등학교 배정 시뮬레이터</title>
+  <style>
+    body { font-family: Arial, sans-serif; background:#f2f7ff; padding:30px; }
+    .box { max-width:1100px; margin:auto; background:white; padding:25px; border-radius:15px; box-shadow:0 0 10px #ccc; }
+    h1 { text-align:center; color:#1565c0; }
+    h2 { color:#333; border-bottom:2px solid #ddd; padding-bottom:5px; }
+    input, select, button { padding:8px; margin:5px; font-size:15px; }
+    button { background:#1565c0; color:white; border:none; border-radius:8px; cursor:pointer; padding:10px 20px; }
+    button:hover { background:#0d47a1; }
+    #result, #simulationResult { background:#eef6ff; padding:15px; margin-top:20px; border-radius:10px; overflow-x:auto; }
+    .assigned { font-size:30px; color:#1565c0; font-weight:bold; }
+    .small { font-size:13px; color:#666; }
+    table { border-collapse:collapse; width:100%; margin-top:10px; background:white; }
+    th, td { border:1px solid #ddd; padding:7px; text-align:center; }
+    th { background:#e3f2fd; }
+    .section { margin-top:35px; padding-top:10px; border-top:3px solid #1565c0; }
+    .notice { background:#fff8e1; padding:12px; border-radius:8px; line-height:1.6; }
+  </style>
+</head>
+<body>
+<div class="box">
+  <h1>수원학군 1구역 고등학교 배정 시뮬레이터</h1>
+  <div class="notice">
+    <b>1단계</b>: 1지망~5지망을 입력합니다. 각 고등학교는 모집정원의 50%를 1단계에서 선발합니다.<br>
+    <b>2단계</b>: 1지망~12지망을 입력합니다. 1단계에서 배정되지 않은 학생은 2단계 순서대로 배정됩니다.
+  </div>
+
+  <h2>개인 학생 정보</h2>
+  <p>이름: <input type="text" id="studentName" placeholder="학생 이름"></p>
+  <p>성별:
+    <select id="gender" onchange="makeSchoolLists()">
+      <option value="">성별 선택</option>
+      <option value="남자">남자</option>
+      <option value="여자">여자</option>
+    </select>
+  </p>
+
+  <h2>1단계 희망학교 선택</h2>
+  <p>1단계 1지망부터 5지망까지 순서대로 선택하세요.</p>
+  <div id="step1">성별을 먼저 선택하세요.</div>
+
+  <h2>2단계 희망학교 선택</h2>
+  <p>2단계 1지망부터 12지망까지 모든 학교를 순서대로 선택하세요.</p>
+  <div id="step2">성별을 먼저 선택하세요.</div>
+
+  <br><button onclick="showResult()">개인 배정 결과 확인</button>
+  <div id="result"></div>
+
+  <div class="section">
+    <h2>전체 가상 학생 배정</h2>
+    <p>남학생 수: <input type="number" id="maleCount" value="1800"> 여학생 수: <input type="number" id="femaleCount" value="1788"></p>
+    <p class="small">가상 학생의 희망학교는 최근 3년 데이터와 추가 규칙을 반영하여 자동 생성됩니다. 실제 배정 결과가 아니라 수업용 시뮬레이션입니다.</p>
+    <button onclick="runFullSimulation()">전체 가상 배정 시작</button>
+    <button onclick="downloadCSV()">결과 CSV 저장</button>
+    <div id="simulationResult"></div>
+  </div>
+</div>
+
+<script>
+  const commonSchools = [
+    { name:"대평고", capacity:270 }, { name:"수원칠보고", capacity:270 }, { name:"수일고", capacity:297 },
+    { name:"숙지고", capacity:297 }, { name:"영생고", capacity:297 }, { name:"율천고", capacity:162 },
+    { name:"장안고", capacity:270 }, { name:"조원고", capacity:270 }, { name:"천천고", capacity:270 },
+    { name:"호매실고", capacity:216 }, { name:"동원동우고", capacity:348 }
+  ];
+  const schoolHistory = {
+    "대평고":["4/4","3/4","1/1"], "수원칠보고":["48/74","55/116","79/116"], "수일고":["3/0","5/0","4/0"],
+    "숙지고":["14/17","18/7","21/21"], "영생고":["14/17","18/7","21/21"], "율천고":["5/1","10/0","2/0"],
+    "장안고":["2/2","2/2","2/2"], "조원고":["0/0","0/0","0/0"], "천천고":["1/1","1/1","2/2"],
+    "호매실고":["15/17","11/7","21/36"], "동원동우고":["8/0","8/2","18/1"],
+    "수성고":["5/2","6/2","8/0"], "영복여고":["10/0","14/7","22/1"]
+  };
+  const secondChoiceLowChanceSchools = ["수원칠보고","호매실고","숙지고","천천고","장안고","대평고"];
+  let lastSimulationStudents = [];
+
+  function getSchoolsByGender(gender){
+    let schools = [...commonSchools];
+    if(gender === "남자") schools.push({name:"수성고", capacity:324});
+    if(gender === "여자") schools.push({name:"영복여고", capacity:297});
+    return schools;
+  }
+  function getSchools(){ return getSchoolsByGender(document.getElementById("gender").value); }
+  function parseHistory(schoolName){
+    const data = schoolHistory[schoolName] || ["0/0","0/0","0/0"];
+    let assignedTotal=0, firstChoiceTotal=0;
+    data.forEach(item => { const [a,b]=item.split("/").map(Number); assignedTotal+=a; firstChoiceTotal+=b; });
+    return {raw:data, assignedTotal, firstChoiceTotal};
+  }
+  function getSchoolRate(schoolName){
+    const h=parseHistory(schoolName);
+    if(h.firstChoiceTotal===0) return 0.5;
+    return Math.min(h.assignedTotal / h.firstChoiceTotal, 1);
+  }
+  function makeSchoolLists(){
+    const gender=document.getElementById("gender").value;
+    const step1=document.getElementById("step1"), step2=document.getElementById("step2");
+    step1.innerHTML=""; step2.innerHTML="";
+    if(gender===""){ step1.innerHTML="성별을 먼저 선택하세요."; step2.innerHTML="성별을 먼저 선택하세요."; return; }
+    for(let i=1;i<=5;i++) step1.innerHTML += `<p>1단계 ${i}지망 <select name="step1School" onchange="updateStepOptions('step1School')"><option value="">학교 선택</option></select></p>`;
+    for(let i=1;i<=12;i++) step2.innerHTML += `<p>2단계 ${i}지망 <select name="step2School" onchange="updateStepOptions('step2School')"><option value="">학교 선택</option></select></p>`;
+    updateStepOptions("step1School"); updateStepOptions("step2School");
+  }
+  function updateStepOptions(selectName){
+    const schools=getSchools();
+    const selects=document.querySelectorAll(`select[name="${selectName}"]`);
+    const selected=Array.from(selects).map(s=>s.value).filter(v=>v!=="");
+    selects.forEach(select=>{
+      const cur=select.value;
+      select.innerHTML='<option value="">학교 선택</option>';
+      schools.forEach(school=>{
+        if(!selected.includes(school.name) || school.name===cur){
+          const op=document.createElement("option");
+          op.value=school.name;
+          const s1=Math.floor(school.capacity*0.5), s2=school.capacity-s1;
+          op.textContent=`${school.name} / 정원 ${school.capacity}명 (1단계 ${s1}명, 2단계 ${s2}명)`;
+          if(school.name===cur) op.selected=true;
+          select.appendChild(op);
+        }
+      });
+    });
+  }
+  function shuffle(array){
+    const copy=[...array];
+    for(let i=copy.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [copy[i],copy[j]]=[copy[j],copy[i]]; }
+    return copy;
+  }
+  function pickWeightedSchool(schools){
+    let total=0;
+    const list=schools.map(school=>{
+      let weight=Math.max(getSchoolRate(school.name),0.05);
+      if(parseHistory(school.name).firstChoiceTotal===0) weight=0.15;
+      total+=weight; return {name:school.name, weight};
+    });
+    let r=Math.random()*total;
+    for(const item of list){ r-=item.weight; if(r<=0) return item.name; }
+    return list[list.length-1].name;
+  }
+  function makeVirtualPreferences(gender){
+    const schools=getSchoolsByGender(gender);
+    let step2=[], candidates=[...schools];
+    const first=pickWeightedSchool(candidates);
+    step2.push(first);
+    candidates=candidates.filter(s=>s.name!==first);
+    shuffle(candidates).forEach(s=>step2.push(s.name));
+    if(secondChoiceLowChanceSchools.includes(step2[1]) && Math.random()<0.8){
+      const low=step2.splice(1,1)[0]; const idx=2+Math.floor(Math.random()*(step2.length-2)); step2.splice(idx,0,low);
+    }
+    const d=step2.indexOf("동원동우고");
+    if(d>=0){ const limit=gender==="남자"?5:6; if(Math.random()<0.6 && d>=limit){ step2.splice(d,1); step2.splice(Math.floor(Math.random()*limit),0,"동원동우고"); } }
+    return { step1: step2.slice(0,5), step2 };
+  }
+  function createVirtualStudents(maleCount,femaleCount){
+    const students=[];
+    for(let i=1;i<=maleCount;i++){ const p=makeVirtualPreferences("남자"); students.push({id:"남"+String(i).padStart(4,"0"), name:"남학생"+i, gender:"남자", step1:p.step1, step2:p.step2, assigned:"", assignedStage:""}); }
+    for(let i=1;i<=femaleCount;i++){ const p=makeVirtualPreferences("여자"); students.push({id:"여"+String(i).padStart(4,"0"), name:"여학생"+i, gender:"여자", step1:p.step1, step2:p.step2, assigned:"", assignedStage:""}); }
+    return shuffle(students);
+  }
+  function getCapacityMap(){
+    const map={}; commonSchools.forEach(s=>map[s.name]=s.capacity); map["수성고"]=324; map["영복여고"]=297; return map;
+  }
+  function getStage1CapacityMap(){ const cap=getCapacityMap(), map={}; Object.keys(cap).forEach(s=>map[s]=Math.floor(cap[s]*0.5)); return map; }
+  function getStage2CapacityMap(stage1AssignedCount){ const cap=getCapacityMap(), map={}; Object.keys(cap).forEach(s=>map[s]=cap[s]-(stage1AssignedCount[s]||0)); return map; }
+
+  function assignStage1(students){
+    const cap=getStage1CapacityMap(); const count={}; Object.keys(cap).forEach(s=>count[s]=0);
+    for(let rank=0;rank<5;rank++){
+      const bySchool={}; Object.keys(cap).forEach(s=>bySchool[s]=[]);
+      students.forEach(st=>{ if(st.assigned!=="") return; const school=st.step1[rank]; if(school && bySchool[school]) bySchool[school].push(st); });
+      Object.keys(bySchool).forEach(school=>{
+        const remain=cap[school]-count[school]; if(remain<=0) return;
+        shuffle(bySchool[school]).slice(0,remain).forEach(st=>{ st.assigned=school; st.assignedStage="1단계 "+(rank+1)+"지망"; count[school]++; });
+      });
+    }
+    return count;
+  }
+  function assignStage2(students, stage1Count){
+    const cap=getStage2CapacityMap(stage1Count); const count={}; Object.keys(cap).forEach(s=>count[s]=0);
+    for(let rank=0;rank<12;rank++){
+      const bySchool={}; Object.keys(cap).forEach(s=>bySchool[s]=[]);
+      students.forEach(st=>{ if(st.assigned!=="") return; const school=st.step2[rank]; if(school && bySchool[school]) bySchool[school].push(st); });
+      Object.keys(bySchool).forEach(school=>{
+        const remain=cap[school]-count[school]; if(remain<=0) return;
+        shuffle(bySchool[school]).slice(0,remain).forEach(st=>{ st.assigned=school; st.assignedStage="2단계 "+(rank+1)+"지망"; count[school]++; });
+      });
+    }
+    return count;
+  }
+  function assignRemaining(students, stage1Count, stage2Count){
+    const cap=getCapacityMap(); const total={}; Object.keys(cap).forEach(s=>total[s]=(stage1Count[s]||0)+(stage2Count[s]||0));
+    students.forEach(st=>{
+      if(st.assigned!=="") return;
+      for(const school of getSchoolsByGender(st.gender).map(s=>s.name)){
+        if(total[school]<cap[school]){ st.assigned=school; st.assignedStage="잔여 배정"; total[school]++; break; }
+      }
+    });
+  }
+  function assignStudents(students){
+    const stage1=assignStage1(students); const stage2=assignStage2(students,stage1); assignRemaining(students,stage1,stage2);
+    const cap=getCapacityMap(); const total={}; Object.keys(cap).forEach(s=>total[s]=0);
+    students.forEach(st=>{ if(st.assigned) total[st.assigned]++; });
+    return {students, capacity:cap, stage1AssignedCount:stage1, stage2AssignedCount:stage2, totalAssignedCount:total};
+  }
+  function readPersonalStudent(){
+    const name=document.getElementById("studentName").value, gender=document.getElementById("gender").value;
+    if(name==="") return {error:"학생 이름을 입력하세요."};
+    if(gender==="") return {error:"성별을 선택하세요."};
+    const step1=[], step2=[];
+    for(const select of document.querySelectorAll('select[name="step1School"]')){ if(select.value==="") return {error:"1단계에서는 1지망부터 5지망까지 모두 선택해야 합니다."}; step1.push(select.value); }
+    for(const select of document.querySelectorAll('select[name="step2School"]')){ if(select.value==="") return {error:"2단계에서는 1지망부터 12지망까지 모두 선택해야 합니다."}; step2.push(select.value); }
+    return {id:"나", name, gender, step1, step2, assigned:"", assignedStage:"", isPersonal:true};
+  }
+  function showResult(){
+    const result=document.getElementById("result"); const personal=readPersonalStudent();
+    if(personal.error){ result.innerHTML=personal.error; return; }
+    const maleCount=personal.gender==="남자"?1799:1800; const femaleCount=personal.gender==="여자"?1787:1788;
+    let students=createVirtualStudents(maleCount,femaleCount); students.push(personal); students=shuffle(students);
+    const sim=assignStudents(students); const me=sim.students.find(s=>s.isPersonal);
+    result.innerHTML=`<h2>배정 결과</h2><p><b>학생:</b> ${me.name}</p><p><b>성별:</b> ${me.gender}</p><h3>최종 배정 고등학교</h3><p class="assigned">${me.assigned}</p><p class="small">배정 단계: ${me.assignedStage}</p>`;
+  }
+  function runFullSimulation(){
+    const maleCount=Number(document.getElementById("maleCount").value), femaleCount=Number(document.getElementById("femaleCount").value);
+    const area=document.getElementById("simulationResult");
+    if(maleCount<=0 || femaleCount<=0){ area.innerHTML="남학생 수와 여학생 수를 올바르게 입력하세요."; return; }
+    const sim=assignStudents(createVirtualStudents(maleCount,femaleCount)); lastSimulationStudents=sim.students;
+    const totalAssigned=sim.students.filter(s=>s.assigned!=="").length;
+    const schoolRows=Object.keys(sim.capacity).map(school=>{
+      const cap=sim.capacity[school], st1=sim.stage1AssignedCount[school]||0, st2=sim.stage2AssignedCount[school]||0, total=sim.totalAssignedCount[school]||0;
+      return `<tr><td>${school}</td><td>${cap}</td><td>${Math.floor(cap*0.5)}</td><td>${st1}</td><td>${st2}</td><td>${total}</td><td>${cap-total}</td></tr>`;
+    }).join("");
+    const sampleRows=sim.students.slice(0,30).map(st=>`<tr><td>${st.id}</td><td>${st.gender}</td><td>${st.step1.join(", ")}</td><td>${st.step2.slice(0,6).join(", ")} ...</td><td>${st.assigned}</td><td>${st.assignedStage}</td></tr>`).join("");
+    area.innerHTML=`<h2>전체 가상 배정 결과</h2><p><b>총 학생 수:</b> ${maleCount+femaleCount}명</p><p><b>배정 완료:</b> ${totalAssigned}명</p><h3>학교별 배정 현황</h3><table><tr><th>학교</th><th>모집정원</th><th>1단계 정원</th><th>1단계 배정</th><th>2단계 배정</th><th>총 배정</th><th>잔여</th></tr>${schoolRows}</table><h3>가상 학생 예시 30명</h3><table><tr><th>ID</th><th>성별</th><th>1단계 희망</th><th>2단계 상위 희망</th><th>배정학교</th><th>배정단계</th></tr>${sampleRows}</table>`;
+  }
+  function downloadCSV(){
+    if(lastSimulationStudents.length===0){ alert("먼저 전체 가상 배정을 실행하세요."); return; }
+    let csv="\uFEFFID,이름,성별,1단계희망,2단계희망,배정학교,배정단계\n";
+    lastSimulationStudents.forEach(st=>{ csv += [st.id, st.name, st.gender, '"'+st.step1.join(" / ")+'"', '"'+st.step2.join(" / ")+'"', st.assigned, st.assignedStage].join(",")+"\n"; });
+    const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"}); const url=URL.createObjectURL(blob); const link=document.createElement("a");
+    link.setAttribute("href",url); link.setAttribute("download","수원1구역_가상배정결과.csv"); document.body.appendChild(link); link.click(); document.body.removeChild(link);
+  }
+</script>
+</body>
+</html>
